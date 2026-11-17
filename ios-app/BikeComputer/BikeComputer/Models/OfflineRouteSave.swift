@@ -55,6 +55,15 @@ struct OfflineRouteSaveDraft: Identifiable, Equatable {
         ), requiresExistingArchive: false)
     }
 
+    static func plannedOpenStreetMap(_ route: NavigationRouteV1, createdAt: Date) throws -> Self {
+        guard route.provider == RouteProviderPolicyV1.openStreetMap else {
+            throw OfflineRouteSaveError.sourceNotApproved
+        }
+        return Self(archive: try NavigationRouteArchiveV1.create(
+            route: route, createdAt: createdAt, purpose: .offlineNavigation
+        ), requiresExistingArchive: false)
+    }
+
     static func installed(_ archive: NavigationRouteArchiveV1, now: Date) throws -> Self {
         try archive.validate(purpose: .offlineNavigation, now: now)
         return Self(archive: archive, requiresExistingArchive: true)
@@ -72,7 +81,8 @@ struct OfflineRouteSaveDraft: Identifiable, Equatable {
             throw OfflineRouteSaveError.invalidName
         }
         guard !requiresExistingArchive,
-              [RouteProviderPolicyV1.importedGPX, RouteProviderPolicyV1.mapKitSavedOnPhone]
+              [RouteProviderPolicyV1.importedGPX, RouteProviderPolicyV1.mapKitSavedOnPhone,
+               RouteProviderPolicyV1.openStreetMap]
                 .contains(archive.route.provider) else {
             throw OfflineRouteSaveError.sourceNotApproved
         }
@@ -101,7 +111,8 @@ struct OfflineRouteSaveDraft: Identifiable, Equatable {
     }
 
     static func sameSavableContent(_ lhs: NavigationRouteV1, _ rhs: NavigationRouteV1) -> Bool {
-        [RouteProviderPolicyV1.importedGPX, RouteProviderPolicyV1.mapKitSavedOnPhone]
+        [RouteProviderPolicyV1.importedGPX, RouteProviderPolicyV1.mapKitSavedOnPhone,
+         RouteProviderPolicyV1.openStreetMap]
             .contains(lhs.provider) && lhs.provider == rhs.provider &&
             lhs.localeIdentifier == rhs.localeIdentifier &&
             lhs.sourceReference == rhs.sourceReference &&

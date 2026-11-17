@@ -32,7 +32,7 @@ private enum RouteCreatorTravelMode: String, CaseIterable, Identifiable {
 }
 
 /// Settings > Saved Routes > Create a Route. The rider orders a start, any
-/// stops and a destination; MapKit calculates one leg per pair and the
+/// stops and a destination; the routing provider calculates one leg per pair and the
 /// stitched route is saved through the shared phone-only save sheet. Direct
 /// navigation search never presents this view.
 struct RouteCreatorView: View {
@@ -42,7 +42,7 @@ struct RouteCreatorView: View {
     let onSaved: (OfflineRouteSaveResult) -> Void
 
     @Environment(\.dismiss) private var dismiss
-    @StateObject private var planner = MultiStopRoutePlanner()
+    @StateObject private var planner = MultiStopRoutePlanner(cyclingProvider: OpenStreetMapRouteProvider())
     @State private var draft: MultiStopRouteDraft
     @State private var travelMode = RouteCreatorTravelMode.cycling
     @State private var editMode: EditMode = .inactive
@@ -235,7 +235,16 @@ struct RouteCreatorView: View {
         } header: {
             Text("Route")
         } footer: {
-            Text("Calculated with Apple Maps. Save keeps the route and its instructions on this iPhone for offline navigation. Offline map tiles and Watch transfer are not included.")
+            VStack(alignment: .leading, spacing: 4) {
+                if travelMode == .cycling {
+                    Link(RouteProviderPolicyV1.openStreetMap.attribution,
+                         destination: RouteProviderPolicyV1.openStreetMapAttributionURL)
+                    Link("Fix the map", destination: URL(string: "https://www.openstreetmap.org/fixthemap")!)
+                } else {
+                    Text("Calculated with Apple Maps.")
+                }
+                Text("Save keeps the route and its instructions on this iPhone for offline navigation.")
+            }
         }
     }
 

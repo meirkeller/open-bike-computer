@@ -8,9 +8,9 @@ import MapKit
 struct MultiStopRoutePlan: Identifiable {
     var id: UUID { route.id }
     let request: MultiStopRouteRequest
-    /// Canonical MapKit legs, one per consecutive pair of stops.
+    /// Canonical legs, one per consecutive pair of stops.
     let legs: [NavigationRouteV1]
-    /// The stitched active-only MapKit route shown in the preview.
+    /// The stitched route shown in the preview.
     let route: NavigationRouteV1
     /// The same route with the explicit phone-only saved scope.
     let draft: OfflineRouteSaveDraft
@@ -32,7 +32,7 @@ enum MultiStopRoutePlanFailure: Equatable {
     }
 }
 
-/// Calculates Settings > Saved Routes > Create a Route plans, one MapKit leg
+/// Calculates Settings > Saved Routes > Create a Route plans, one leg
 /// per pair of stops. It owns its directions requests and never touches the
 /// coordinator's direct-navigation plan, rerouting or active navigation.
 @MainActor
@@ -50,9 +50,11 @@ final class MultiStopRoutePlanner: ObservableObject {
     private(set) var request: MultiStopRouteRequest?
 
     private let directionsFactory: NavigationDirectionsFactory
+    private let cyclingProvider: (any NavigationRouteProvider)?
     private let limits: NavigationRouteLimitsV1
     private let now: () -> Date
     private var generation: UInt = 0
+    private var activeCyclingTask: Task<Void, Never>?
     private var activeDirections: (any NavigationDirectionsTask)?
     private var cachedLegs: [LegKey: NavigationRouteV1] = [:]
     private var cachedLegOrder: [LegKey] = []
@@ -69,10 +71,12 @@ final class MultiStopRoutePlanner: ObservableObject {
         directionsFactory: @escaping NavigationDirectionsFactory = {
             MapKitNavigationDirectionsTask(request: $0)
         },
+        cyclingProvider: (any NavigationRouteProvider)? = nil,
         limits: NavigationRouteLimitsV1 = .production,
         now: @escaping () -> Date = Date.init
     ) {
         self.directionsFactory = directionsFactory
+        self.cyclingProvider = cyclingProvider
         self.limits = limits
         self.now = now
     }
@@ -119,6 +123,9 @@ final class MultiStopRoutePlanner: ObservableObject {
 
     private func invalidate() {
         generation &+= 1
+        activeCyclingTask?.cancel()
+        activeCyclingTask = nil
+        cyclingProvider?.cancel()
         activeDirections?.cancel()
         activeDirections = nil
     }
@@ -168,6 +175,29 @@ final class MultiStopRoutePlanner: ObservableObject {
         )
         let source = request.places[index]
         let destination = request.places[index + 1]
+        if request.transportType == RouteTransportTypes.cycling, let cyclingProvider {
+            let legRequest = NavigationRouteRequestV1(
+                source: RouteEndpointV1(coordinate: source.wgs84Coordinate, label: source.label),
+                destination: RouteEndpointV1(coordinate: destination.wgs84Coordinate, label: destination.label),
+                localeIdentifier: localeIdentifier, transportType: .cycling,
+                requestAlternatives: false
+            )
+            activeCyclingTask = Task { [weak self] in
+                let result: Result<[NavigationRouteV1], Error>
+                do {
+                    result = .success(try await cyclingProvider.routes(for: legRequest))
+                } catch {
+                    result = .failure(error)
+                }
+                guard let self, self.generation == generation else { return }
+                self.activeCyclingTask = nil
+                self.acceptLeg(
+                    result.map { $0.first }, request: request, localeIdentifier: localeIdentifier,
+                    legs: legs, index: index, generation: generation
+                )
+            }
+            return
+        }
         let directionsRequest = MKDirections.Request()
         directionsRequest.source = source.mapItem
         directionsRequest.destination = destination.mapItem
@@ -180,40 +210,48 @@ final class MultiStopRoutePlanner: ObservableObject {
             guard let self, self.generation == generation,
                   self.activeDirections === directions else { return }
             self.activeDirections = nil
-            switch result {
-            case .failure(let error):
-                self.state = .failed(.leg(
-                    index: index,
-                    message: Self.legFailureMessage(error, from: source, to: destination)
-                ))
-            case .success(let routes):
-                guard let leg = Self.preferredLeg(
-                    from: routes,
-                    source: source,
-                    destination: destination,
-                    localeIdentifier: localeIdentifier
-                ) else {
-                    self.state = .failed(.leg(
-                        index: index,
-                        message: Self.noRouteMessage(from: source, to: destination)
-                    ))
-                    return
-                }
-                self.store(leg, for: self.legKey(
-                    from: source,
-                    to: destination,
-                    request: request,
-                    localeIdentifier: localeIdentifier
-                ))
-                var legs = legs
-                legs[index] = leg
-                self.continueCalculation(
-                    request: request,
-                    localeIdentifier: localeIdentifier,
-                    legs: legs,
-                    generation: generation
-                )
-            }
+            self.acceptLeg(
+                result.map {
+                    Self.preferredLeg(
+                        from: $0, source: source, destination: destination,
+                        localeIdentifier: localeIdentifier
+                    )
+                },
+                request: request, localeIdentifier: localeIdentifier, legs: legs,
+                index: index, generation: generation
+            )
+        }
+    }
+
+    private func acceptLeg(
+        _ result: Result<NavigationRouteV1?, Error>,
+        request: MultiStopRouteRequest,
+        localeIdentifier: String,
+        legs: [NavigationRouteV1?],
+        index: Int,
+        generation: UInt
+    ) {
+        let source = request.places[index]
+        let destination = request.places[index + 1]
+        switch result {
+        case .failure(let error):
+            let usesOpenStreetMap = request.transportType == RouteTransportTypes.cycling &&
+                cyclingProvider != nil
+            let message = usesOpenStreetMap
+                ? "OpenStreetMap could not calculate the route from \(source.label) to \(destination.label). \(error.localizedDescription)"
+                : Self.legFailureMessage(error, from: source, to: destination)
+            state = .failed(.leg(index: index, message: message))
+        case .success(nil):
+            state = .failed(.leg(index: index, message: Self.noRouteMessage(from: source, to: destination)))
+        case .success(let leg?):
+            store(leg, for: legKey(
+                from: source, to: destination, request: request,
+                localeIdentifier: localeIdentifier
+            ))
+            var legs = legs
+            legs[index] = leg
+            continueCalculation(request: request, localeIdentifier: localeIdentifier,
+                                legs: legs, generation: generation)
         }
     }
 
@@ -225,7 +263,9 @@ final class MultiStopRoutePlanner: ObservableObject {
                 limits: limits
             )
             let createdAt = now()
-            let draft = try OfflineRouteSaveDraft.plannedMapKit(route, createdAt: createdAt)
+            let draft: OfflineRouteSaveDraft = try route.provider == RouteProviderPolicyV1.openStreetMap
+                ? .plannedOpenStreetMap(route, createdAt: createdAt)
+                : .plannedMapKit(route, createdAt: createdAt)
             // Reject a plan the library could not store before offering Save.
             _ = try draft.archive.encoded(
                 purpose: .offlineNavigation,

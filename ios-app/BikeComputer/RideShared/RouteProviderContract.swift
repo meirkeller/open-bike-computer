@@ -35,6 +35,14 @@ nonisolated enum RouteProviderPolicyV1 {
         storageScope: .phoneOnly
     )
 
+    static let openStreetMap = RouteProviderMetadataV1(
+        providerID: "osm.valhalla",
+        attribution: "© OpenStreetMap contributors",
+        storageScope: .phoneOnly
+    )
+
+    static let openStreetMapAttributionURL = URL(string: "https://www.openstreetmap.org/copyright")!
+
     static let importedGPX = RouteProviderMetadataV1(
         providerID: "user.imported-gpx",
         attribution: "User-provided GPX",
@@ -79,6 +87,8 @@ nonisolated enum RouteProviderPolicyV1 {
         switch metadata.providerID {
         case mapKit.providerID:
             metadata == mapKit || metadata == mapKitSavedOnPhone
+        case openStreetMap.providerID:
+            metadata == openStreetMap
         case importedGPX.providerID:
             metadata == importedGPX
         case strava.providerID:
@@ -93,7 +103,8 @@ nonisolated enum RouteProviderPolicyV1 {
     ) -> Bool {
         // Implementation admission, not a license grant. A self-declared
         // durable scope is insufficient, and normal MapKit responses still fail.
-        metadata == importedGPX || metadata == strava || metadata == mapKitSavedOnPhone
+        metadata == importedGPX || metadata == strava || metadata == mapKitSavedOnPhone ||
+            metadata == openStreetMap
     }
 
     static func requiresExpiry(

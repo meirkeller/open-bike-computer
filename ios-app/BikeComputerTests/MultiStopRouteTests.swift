@@ -125,6 +125,7 @@ private enum Stops {
 
 extension OfflineRouteSaveTests {
     static func multiStopRouteTests() throws {
+        try openStreetMapRouteDecodingAndSave()
         try multiStopOrderingAndStitching()
         try multiStopDraftEditingAndLimits()
         try multiStopReorderingReusesLegs()
@@ -136,6 +137,46 @@ extension OfflineRouteSaveTests {
         try multiStopPlaceResolution()
         try multiStopDirectNavigationIsolation()
         try multiStopCurrentLocationBesideBorder()
+    }
+
+    static func openStreetMapRouteDecodingAndSave() throws {
+        let fixture = MultiStopFixture()
+        defer { fixture.cleanup() }
+        let request = NavigationRouteRequestV1(
+            source: RouteEndpointV1(
+                coordinate: RouteCoordinateV1(latitude: 31.771, longitude: 35.210),
+                label: "Start"
+            ),
+            destination: RouteEndpointV1(
+                coordinate: RouteCoordinateV1(latitude: 31.772, longitude: 35.211),
+                label: "Finish"
+            ),
+            localeIdentifier: "en_IL", transportType: .cycling, requestAlternatives: false
+        )
+        let response = """
+        {"trip":{"status":0,"units":"kilometers","language":"en-US","summary":{"length":0.207,"time":64},
+        "legs":[{"shape":"ovcr{@_p`dbAo}@??o}@","maneuvers":[
+          {"begin_shape_index":0,"end_shape_index":1,"instruction":"Head north.","length":0.111,"type":1},
+          {"begin_shape_index":1,"end_shape_index":2,"instruction":"Turn right.","length":0.096,"type":10},
+          {"begin_shape_index":2,"end_shape_index":2,"instruction":"You have arrived.","length":0,"type":4}
+        ]}]}}
+        """
+        let route = try OpenStreetMapRouteProvider.decodeRoute(Data(response.utf8), request: request)
+        check(route.source == request.source && route.destination == request.destination,
+              "Polyline6 preserves WGS-84 geometry and endpoint labels")
+        check(route.steps.map(\.maneuver) == [.straight, .right, .arrive] &&
+              route.distanceMeters == 207 && route.expectedTravelTimeSeconds == 64,
+              "Valhalla maneuver types and metric units are retained")
+        let stitched = try MultiStopRouteStitcher.stitch(legs: [route], stopLabels: ["Start", "Finish"])
+        let draft = try OfflineRouteSaveDraft.plannedOpenStreetMap(stitched, createdAt: fixture.now)
+        let saved = try fixture.library.saveOffline(draft, name: "Jerusalem test route")
+        let duplicate = try fixture.library.saveOffline(draft, name: "Duplicate")
+        check(saved.summary.providerID == RouteProviderPolicyV1.openStreetMap.providerID &&
+              saved.summary.name == "Jerusalem test route" && duplicate.alreadySaved,
+              "The saved OSM route retains provenance, supports naming and is deduplicated")
+        let malformed = response.replacingOccurrences(of: "ovcr{@_p`dbAo}@??o}@", with: "o")
+        check((try? OpenStreetMapRouteProvider.decodeRoute(Data(malformed.utf8), request: request)) == nil,
+              "Reject a truncated Valhalla shape")
     }
 
     /// Beside Shenzhen, Hong Kong's Apple Maps coordinates also read as

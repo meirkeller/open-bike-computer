@@ -2287,12 +2287,22 @@ struct ContentView: View {
     private func navigationInstructionBanner(
         isCompactHeight: Bool
     ) -> some View {
-        NavigationInstructionBanner(
-            iconID: coordinator.currentIconID,
-            distanceToManeuver: coordinator.distanceToManeuver,
-            instruction: coordinator.currentInstruction,
-            isCompactHeight: isCompactHeight
-        )
+        VStack(alignment: .leading, spacing: 4) {
+            NavigationInstructionBanner(
+                iconID: coordinator.currentIconID,
+                distanceToManeuver: coordinator.distanceToManeuver,
+                instruction: coordinator.currentInstruction,
+                isCompactHeight: isCompactHeight
+            )
+            if coordinator.offlineRouteSummary?.providerID == RouteProviderPolicyV1.openStreetMap.providerID {
+                Link(RouteProviderPolicyV1.openStreetMap.attribution,
+                     destination: RouteProviderPolicyV1.openStreetMapAttributionURL)
+                    .font(.caption)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 4)
+                    .background(.regularMaterial, in: Capsule())
+            }
+        }
     }
 
     private var shouldShowOfflineMapStatusChip: Bool {
