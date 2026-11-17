@@ -347,9 +347,8 @@ enum MultiStopRouteStitchError: LocalizedError, Equatable {
 }
 
 /// Joins consecutive MapKit legs into one canonical route without changing
-/// provider, normalization or any leg geometry. The result is an ordinary
-/// active-only MapKit route; only `OfflineRouteSaveDraft.plannedMapKit` may
-/// give it the explicit phone-only saved scope.
+/// provider, normalization or any leg geometry. The result retains the
+/// original routing provider and its storage policy.
 enum MultiStopRouteStitcher {
     /// MapKit snaps the end of one leg and the start of the next to the road
     /// network independently. A join up to this length is that snapping
@@ -375,12 +374,14 @@ enum MultiStopRouteStitcher {
             )
         }
         guard let firstLeg = legs.first,
+              [RouteProviderPolicyV1.mapKit, RouteProviderPolicyV1.openStreetMap]
+                  .contains(firstLeg.provider),
               labels.count == legs.count + 1,
               labels.allSatisfy({ !$0.isEmpty }) else {
             throw MultiStopRouteStitchError.invalidLegs
         }
         for leg in legs {
-            guard leg.provider == RouteProviderPolicyV1.mapKit,
+            guard leg.provider == firstLeg.provider,
                   leg.sourceReference == nil,
                   leg.localeIdentifier == firstLeg.localeIdentifier,
                   leg.transportType == firstLeg.transportType,
@@ -456,7 +457,7 @@ enum MultiStopRouteStitcher {
         let route = NavigationRouteV1(
             id: routeID,
             revision: 1,
-            provider: RouteProviderPolicyV1.mapKit,
+            provider: firstLeg.provider,
             localeIdentifier: firstLeg.localeIdentifier,
             transportType: firstLeg.transportType,
             source: RouteEndpointV1(coordinate: first, label: labels[0]),

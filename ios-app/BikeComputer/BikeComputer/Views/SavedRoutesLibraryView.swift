@@ -94,8 +94,8 @@ struct RouteSaveSheet: View {
         _interaction = State(initialValue: interaction)
     }
 
-    private var isPlannedMapKitRoute: Bool {
-        interaction.draft?.archive.route.provider == RouteProviderPolicyV1.mapKitSavedOnPhone
+    private var isPhoneOnlyRoute: Bool {
+        interaction.draft?.archive.route.provider.storageScope == .phoneOnly
     }
 
     var body: some View {
@@ -119,7 +119,7 @@ struct RouteSaveSheet: View {
                             dismiss()
                         }
                     } label: {
-                        Label(isPlannedMapKitRoute ? "Save Offline" : "Save Route",
+                        Label(isPhoneOnlyRoute ? "Save Offline" : "Save Route",
                               systemImage: "square.and.arrow.down")
                     }
                     .disabled(!interaction.canSave(now: Date()))
@@ -129,12 +129,12 @@ struct RouteSaveSheet: View {
                             .accessibilityIdentifier("offlineRouteSaveFailure")
                     }
                 } footer: {
-                    Text(isPlannedMapKitRoute
-                         ? "Saves this Apple Maps route and its instructions on this iPhone. Offline map tiles and Watch transfer are not included."
+                    Text(isPhoneOnlyRoute
+                         ? "Saves this route and its instructions on this iPhone. Offline map tiles and Watch transfer are not included."
                          : "Saves route guidance on this iPhone, not offline map tiles. You can send the saved route to Apple Watch separately.")
                 }
             }
-            .navigationTitle(isPlannedMapKitRoute ? "Save Offline" : "Import GPX")
+            .navigationTitle(isPhoneOnlyRoute ? "Save Offline" : "Import GPX")
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Cancel", role: .cancel) { interaction.cancel(); dismiss() }
